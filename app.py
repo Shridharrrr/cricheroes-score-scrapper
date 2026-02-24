@@ -38,32 +38,30 @@ def get_match_data(url):
     if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
         raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
 
-    # 2. Check if we already have the __NEXT_DATA__ on this page
-    next_data_tag = soup.find("script", id="__NEXT_DATA__")
+    # 2. Figure out the Scorecard URL safely
+    real_url = response.url
+    if real_url.endswith("/scorecard"):
+        pass
+    else:
+        og_url_tag = soup.find("meta", property="og:url")
+        if og_url_tag and og_url_tag.get("content"):
+            og_url = og_url_tag["content"]
+            if not og_url.startswith("http"):
+                og_url = "https://" + og_url
+            real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
+        else:
+            real_url = real_url.rstrip("/") + "/scorecard"
 
     # 3. Navigate to the actual scorecard page if needed
-    if not next_data_tag:
-        real_url = response.url
-        if not real_url.endswith("/scorecard"):
-            og_url_tag = soup.find("meta", property="og:url")
-            if og_url_tag and og_url_tag.get("content"):
-                og_url = og_url_tag["content"]
-                if not og_url.startswith("http"):
-                    og_url = "https://" + og_url
-                if not og_url.endswith("/scorecard"):
-                    real_url = og_url + "/scorecard"
-                else:
-                    real_url = og_url
-            else:
-                real_url = real_url.rstrip("/") + "/scorecard"
+    if response.url != real_url and not response.url.endswith("/scorecard"):
+        # We DO NOT pass the referer from the previous domain redirect to avoid 403 block
+        response = scraper.get(real_url, timeout=30)
+        if response.status_code != 200:
+             raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        if response.url != real_url and not response.url.endswith("/scorecard"):
-            # Avoid sending Referer header to bypass some 403 Cloudflare blocks
-            response = scraper.get(real_url, timeout=30)
-            if response.status_code != 200:
-                 raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
-            soup = BeautifulSoup(response.text, 'html.parser')
-            next_data_tag = soup.find("script", id="__NEXT_DATA__")
+    # 4. Extract the __NEXT_DATA__ JSON script
+    next_data_tag = soup.find("script", id="__NEXT_DATA__")
     if not next_data_tag:
         raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
     
