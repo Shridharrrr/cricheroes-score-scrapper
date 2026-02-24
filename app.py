@@ -19,8 +19,11 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
+    # Use a session to persist cookies and headers across requests (handles redirects and nested Cloudflare challenges better)
+    session = requests.Session(impersonate="chrome120")
+    
     # 1. Fetch the URL using curl_cffi to bypass Cloudflare
-    response = requests.get(url, impersonate="chrome120", timeout=30)
+    response = session.get(url, timeout=30)
     if response.status_code != 200:
         raise Exception(f"Failed to load URL. Status code: {response.status_code}. Possible Cloudflare block.")
     
@@ -31,19 +34,22 @@ def get_match_data(url):
         raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
 
     # 2. Figure out the Scorecard URL safely
-    if url.endswith("/scorecard"):
-        real_url = url
+    real_url = response.url
+    if real_url.endswith("/scorecard"):
+        pass
     else:
         og_url_tag = soup.find("meta", property="og:url")
         if og_url_tag and og_url_tag.get("content"):
             og_url = og_url_tag["content"]
+            if not og_url.startswith("http"):
+                og_url = "https://" + og_url
             real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
         else:
-            real_url = url.rstrip("/") + "/scorecard"
+            real_url = real_url.rstrip("/") + "/scorecard"
 
     # 3. Navigate to the actual scorecard page if needed
     if response.url != real_url and not response.url.endswith("/scorecard"):
-        response = requests.get(real_url, impersonate="chrome120", timeout=30)
+        response = session.get(real_url, timeout=30)
         if response.status_code != 200:
              raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
         soup = BeautifulSoup(response.text, 'html.parser')
