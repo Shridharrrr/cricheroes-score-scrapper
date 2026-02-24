@@ -8,6 +8,8 @@ import streamlit as st
 import json
 import os
 from playwright.sync_api import sync_playwright
+from curl_cffi import requests
+from bs4 import BeautifulSoup
 
 @st.cache_resource
 def install_playwright():
@@ -17,80 +19,41 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--single-process",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled" # Anti-bot flag
-            ]
-        )
-        
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
-        )
-        page = context.new_page()
-        
-        # --- THE MAGIC BYPASS ---
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        # ------------------------
+    # 1. Fetch the URL using curl_cffi to bypass Cloudflare
+    response = requests.get(url, impersonate="chrome120", timeout=30)
+    if response.status_code != 200:
+        raise Exception(f"Failed to load URL. Status code: {response.status_code}. Possible Cloudflare block.")
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    page_title = soup.title.string if soup.title else ""
+    
+    if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
+        raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
 
-        try:
-            # 1. Load the URL
-            # FIX: Changed from "domcontentloaded" to "load" so the browser waits for all resources and initial redirects to finish.
-            page.goto(url, wait_until="load", timeout=30000)
-            
-            # FIX: Add a brief wait to let SPA routers (like Next.js) finish their client-side rendering/redirects.
-            try:
-                page.wait_for_load_state("networkidle", timeout=2000)
-            except Exception:
-                pass # It's okay if the network isn't perfectly idle, we just wanted a brief buffer.
+    # 2. Figure out the Scorecard URL safely
+    if url.endswith("/scorecard"):
+        real_url = url
+    else:
+        og_url_tag = soup.find("meta", property="og:url")
+        if og_url_tag and og_url_tag.get("content"):
+            og_url = og_url_tag["content"]
+            real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
+        else:
+            real_url = url.rstrip("/") + "/scorecard"
 
-            # DIAGNOSTIC CHECK
-            # FIX: Wrap the title check in a try-except to safely catch and recover from the execution context error.
-            try:
-                page_title = page.title()
-            except Exception as e:
-                if "Execution context was destroyed" in str(e):
-                    # The page navigated right as we asked for the title. Wait for it to settle and try once more.
-                    page.wait_for_load_state("load")
-                    page_title = page.title()
-                else:
-                    raise
+    # 3. Navigate to the actual scorecard page if needed
+    if response.url != real_url and not response.url.endswith("/scorecard"):
+        response = requests.get(real_url, impersonate="chrome120", timeout=30)
+        if response.status_code != 200:
+             raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-            if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
-                raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
-
-            # 2. Figure out the Scorecard URL safely
-            if url.endswith("/scorecard"):
-                real_url = url
-            else:
-                try:
-                    page.wait_for_selector('meta[property="og:url"]', timeout=3000)
-                    og_url = page.locator('meta[property="og:url"]').get_attribute("content")
-                    real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
-                except Exception:
-                    real_url = url.rstrip("/") + "/scorecard"
-
-            # 3. Navigate to the actual scorecard page
-            if page.url != real_url:
-                # FIX: Also changed this to "load" to ensure the scorecard page fully renders before we search for the JSON.
-                page.goto(real_url, wait_until="load", timeout=30000)
-
-            # 4. Extract the __NEXT_DATA__ JSON script
-            next_data_locator = page.locator('script#__NEXT_DATA__')
-            if next_data_locator.count() == 0:
-                raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
-            
-            json_text = next_data_locator.inner_text()
-
-        finally:
-            browser.close()
+    # 4. Extract the __NEXT_DATA__ JSON script
+    next_data_tag = soup.find("script", id="__NEXT_DATA__")
+    if not next_data_tag:
+        raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
+    
+    json_text = next_data_tag.string
 
     # 5. Parse the extracted JSON
     data = json.loads(json_text)
