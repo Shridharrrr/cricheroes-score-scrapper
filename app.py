@@ -23,20 +23,22 @@ def get_match_data(url):
         browser={
             'browser': 'chrome',
             'platform': 'windows',
-            'mobile': False
-        }
+            'mobile': False,
+            'desktop': True
+        },
+        delay=10 # Wait a bit to pass JS challenges if any
     )
     
     # 1. Fetch the URL using cloudscraper to bypass Cloudflare
     response = scraper.get(url, timeout=30)
     if response.status_code != 200:
-        raise Exception(f"Failed to load URL. Status code: {response.status_code}. Possible Cloudflare block.")
+        raise Exception(f"Failed to load INITIAL URL '{url}'. Status code: {response.status_code}. Possible Cloudflare block on Streamlit IP.")
     
     soup = BeautifulSoup(response.text, 'html.parser')
     page_title = soup.title.string if soup.title else ""
     
     if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
-        raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
+        raise Exception(f"Blocked by anti-bot protection on INITIAL URL. Page Title: '{page_title}'")
 
     # 2. Figure out the Scorecard URL safely
     real_url = response.url
@@ -57,7 +59,7 @@ def get_match_data(url):
         # We DO NOT pass the referer from the previous domain redirect to avoid 403 block
         response = scraper.get(real_url, timeout=30)
         if response.status_code != 200:
-             raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
+             raise Exception(f"Failed to load FINAL scorecard URL '{real_url}'. Status: {response.status_code}")
         soup = BeautifulSoup(response.text, 'html.parser')
 
     # 4. Extract the __NEXT_DATA__ JSON script
