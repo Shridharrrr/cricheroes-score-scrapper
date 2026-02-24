@@ -1,0 +1,8 @@
+__pycache__
+.env
+scorecard.pdf
+debug_screenshot.png
+debug_page.html
+*.pyc
+.DS_Store
+userdata/
