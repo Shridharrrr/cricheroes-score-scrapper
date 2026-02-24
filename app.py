@@ -19,69 +19,47 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
-    impersonates = ["chrome110", "safari15_5", "chrome120", "edge101"]
-    response = None
-    
-    # 1. Fetch the INITIAL URL using curl_cffi with fallback impersonations
-    for imp in impersonates:
-        scraper = requests.Session(impersonate=imp)
-        try:
-            r = scraper.get(url, timeout=30)
-            if r.status_code == 200:
-                response = r
-                break
-        except Exception:
-            continue
-            
-    if not response or response.status_code != 200:
-        raise Exception(f"Failed to load INITIAL URL '{url}'. Status code: {response.status_code if response else 'Timeout'}. Possible Cloudflare block on Streamlit IP.")
-    
-    soup = BeautifulSoup(response.text, 'html.parser')
-    page_title = soup.title.string if soup.title else ""
-    
-    if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
-        raise Exception(f"Blocked by anti-bot protection on INITIAL URL. Page Title: '{page_title}'")
-
-    # 2. Figure out the Scorecard URL safely
-    real_url = response.url
-    if real_url.endswith("/scorecard"):
-        pass
-    else:
-        og_url_tag = soup.find("meta", property="og:url")
-        if og_url_tag and og_url_tag.get("content"):
-            og_url = og_url_tag["content"]
-            if not og_url.startswith("http"):
-                og_url = "https://" + og_url
-            real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
-        else:
-            real_url = real_url.rstrip("/") + "/scorecard"
-
-    # 3. Navigate to the actual scorecard page if needed
-    if response.url != real_url and not response.url.endswith("/scorecard"):
-        response2 = None
-        for imp in impersonates:
-            scraper = requests.Session(impersonate=imp)
-            try:
-                # Attempt to load the final URL
-                r2 = scraper.get(real_url, timeout=30)
-                if r2.status_code == 200:
-                    response2 = r2
-                    break
-            except Exception:
-                continue
-
-        if not response2 or response2.status_code != 200:
-             raise Exception(f"Failed to load FINAL scorecard URL '{real_url}'. Status: {response2.status_code if response2 else 'Timeout'}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--single-process",
+                "--disable-gpu"
+            ]
+        )
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
         
-        response = response2
-        soup = BeautifulSoup(response.text, 'html.parser')
+        try:
+            # 1. Fetch the INITIAL URL and let Playwright handle any Javascript/Meta redirects natively
+            response = page.goto(url, timeout=60000)
+            if response and response.status >= 400 and response.status != 403:
+                 raise Exception(f"Failed to load URL '{url}'. Status: {response.status}.")
+            
+            # 2. Wait explicitly for the NextJS data to be injected into the DOM.
+            # This automatically waits through Cloudflare "Just a moment" screens
+            # AND waits through the shortlink redirection process!
+            page.wait_for_selector('script#__NEXT_DATA__', state='attached', timeout=45000)
+            
+            # 3. Now it is safe to extract the content
+            soup = BeautifulSoup(page.content(), 'html.parser')
+            
+        except Exception as e:
+            browser.close()
+            raise Exception(f"Error fetching data from URL (could be Cloudflare timeout): {str(e)}")
 
-    # 4. Extract the __NEXT_DATA__ JSON script
-    next_data_tag = soup.find("script", id="__NEXT_DATA__")
-    if not next_data_tag:
-        raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
-    
-    json_text = next_data_tag.string
+        # 4. Extract the __NEXT_DATA__ JSON script
+        next_data_tag = soup.find("script", id="__NEXT_DATA__")
+        browser.close()
+
+        if not next_data_tag:
+            raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
+        
+        json_text = next_data_tag.string
 
     # 5. Parse the extracted JSON
     data = json.loads(json_text)
