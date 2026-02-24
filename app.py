@@ -38,8 +38,13 @@ def get_match_data(url):
         if response and response.status >= 400 and response.status != 403:
              raise Exception(f"Failed to load URL '{url}'. Status: {response.status}.")
         
-        # Give shortlinks time to execute Javascript/Meta redirects before checking page.url
-        page.wait_for_timeout(3000)
+        # Wait explicitly until the URL changes away from the shortlink domain.
+        # This completely eliminates timing issues with Streamlit servers executing the JS redirect slowly.
+        if "chshare.link" in url:
+            try:
+                page.wait_for_url(lambda u: "chshare.link" not in u, timeout=15000)
+            except Exception as e:
+                print(f"Warning: URL did not change from shortlink after 15s. Current URL: {page.url}")
         
         # 2. Construct the final scorecard URL if the redirect went to the summary page.
         # We strip query parameters to avoid 404s/403s on the scorecard endpoint.
