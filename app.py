@@ -36,17 +36,33 @@ def get_match_data(url):
         )
         page = context.new_page()
         
-        # --- THE MAGIC BYPASS (Replaces playwright-stealth) ---
-        # This strips the "webdriver" flag from the browser before the page even loads
+        # --- THE MAGIC BYPASS ---
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        # ------------------------------------------------------
+        # ------------------------
 
         try:
             # 1. Load the URL
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # FIX: Changed from "domcontentloaded" to "load" so the browser waits for all resources and initial redirects to finish.
+            page.goto(url, wait_until="load", timeout=30000)
             
+            # FIX: Add a brief wait to let SPA routers (like Next.js) finish their client-side rendering/redirects.
+            try:
+                page.wait_for_load_state("networkidle", timeout=2000)
+            except Exception:
+                pass # It's okay if the network isn't perfectly idle, we just wanted a brief buffer.
+
             # DIAGNOSTIC CHECK
-            page_title = page.title()
+            # FIX: Wrap the title check in a try-except to safely catch and recover from the execution context error.
+            try:
+                page_title = page.title()
+            except Exception as e:
+                if "Execution context was destroyed" in str(e):
+                    # The page navigated right as we asked for the title. Wait for it to settle and try once more.
+                    page.wait_for_load_state("load")
+                    page_title = page.title()
+                else:
+                    raise
+
             if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
                 raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
 
@@ -63,7 +79,8 @@ def get_match_data(url):
 
             # 3. Navigate to the actual scorecard page
             if page.url != real_url:
-                page.goto(real_url, wait_until="domcontentloaded", timeout=30000)
+                # FIX: Also changed this to "load" to ensure the scorecard page fully renders before we search for the JSON.
+                page.goto(real_url, wait_until="load", timeout=30000)
 
             # 4. Extract the __NEXT_DATA__ JSON script
             next_data_locator = page.locator('script#__NEXT_DATA__')
