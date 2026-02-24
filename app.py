@@ -26,7 +26,6 @@ def get_match_data(url):
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--single-process",
                 "--disable-gpu"
             ]
         )
@@ -34,23 +33,40 @@ def get_match_data(url):
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         
-        try:
-            # 1. Fetch the INITIAL URL and let Playwright handle any Javascript/Meta redirects natively
-            response = page.goto(url, timeout=60000)
-            if response and response.status >= 400 and response.status != 403:
-                 raise Exception(f"Failed to load URL '{url}'. Status: {response.status}.")
+        # 1. Fetch the INITIAL URL and let Playwright handle any Javascript/Meta redirects natively
+        response = page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        if response and response.status >= 400 and response.status != 403:
+             raise Exception(f"Failed to load URL '{url}'. Status: {response.status}.")
+        
+        # Give shortlinks time to execute Javascript/Meta redirects before checking page.url
+        page.wait_for_timeout(3000)
+        
+        # 2. Construct the final scorecard URL if the redirect went to the summary page.
+        # We strip query parameters to avoid 404s/403s on the scorecard endpoint.
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(page.url)
+        path = parsed.path
+        
+        if not path.endswith('/scorecard'):
+            if path.endswith('/summary'):
+                path = path[:-8] # remove '/summary'
+            elif path.endswith('/summary/'):
+                path = path[:-9]
+                
+            path = path.rstrip('/') + '/scorecard'
+            final_url = urlunparse((parsed.scheme, parsed.netloc, path, '', '', ''))
             
-            # 2. Wait explicitly for the NextJS data to be injected into the DOM.
-            # This automatically waits through Cloudflare "Just a moment" screens
-            # AND waits through the shortlink redirection process!
-            page.wait_for_selector('script#__NEXT_DATA__', state='attached', timeout=45000)
-            
-            # 3. Now it is safe to extract the content
-            soup = BeautifulSoup(page.content(), 'html.parser')
-            
-        except Exception as e:
-            browser.close()
-            raise Exception(f"Error fetching data from URL (could be Cloudflare timeout): {str(e)}")
+            # Navigate to the actual scorecard page
+            response2 = page.goto(final_url, wait_until="domcontentloaded", timeout=60000)
+            if response2 and response2.status >= 400 and response2.status != 403:
+                 raise Exception(f"Failed to load FINAL URL '{final_url}'. Status: {response2.status}.")
+        
+        # 3. Wait explicitly for the NextJS data to be injected into the DOM.
+        # This automatically waits through Cloudflare "Just a moment" screens
+        page.wait_for_selector('script#__NEXT_DATA__', state='attached', timeout=45000)
+        
+        # 4. Now it is safe to extract the HTML content
+        soup = BeautifulSoup(page.content(), 'html.parser')
 
         # 4. Extract the __NEXT_DATA__ JSON script
         next_data_tag = soup.find("script", id="__NEXT_DATA__")
@@ -163,7 +179,6 @@ def generate_pdf_bytes(data_packet):
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--single-process",
                 "--disable-gpu"
             ],
         )
