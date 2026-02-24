@@ -36,6 +36,10 @@ def get_match_data(url):
     session = requests.Session()
     r2 = session.get(real_url, headers=headers, timeout=20)
 
+
+    st.write(f"Status Code: {r2.status_code}")
+    st.write(f"Response snippet: {r2.text[:500]}") 
+
     if "__NEXT_DATA__" not in r2.text:
         raise Exception("Failed to fetch scorecard page")
 
