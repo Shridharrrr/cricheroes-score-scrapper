@@ -19,12 +19,22 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
-    scraper = requests.Session(impersonate="chrome110")
+    impersonates = ["chrome110", "safari15_5", "chrome120", "edge101"]
+    response = None
     
-    # 1. Fetch the URL using curl_cffi to bypass Cloudflare
-    response = scraper.get(url, timeout=30)
-    if response.status_code != 200:
-        raise Exception(f"Failed to load INITIAL URL '{url}'. Status code: {response.status_code}. Possible Cloudflare block on Streamlit IP.")
+    # 1. Fetch the INITIAL URL using curl_cffi with fallback impersonations
+    for imp in impersonates:
+        scraper = requests.Session(impersonate=imp)
+        try:
+            r = scraper.get(url, timeout=30)
+            if r.status_code == 200:
+                response = r
+                break
+        except Exception:
+            continue
+            
+    if not response or response.status_code != 200:
+        raise Exception(f"Failed to load INITIAL URL '{url}'. Status code: {response.status_code if response else 'Timeout'}. Possible Cloudflare block on Streamlit IP.")
     
     soup = BeautifulSoup(response.text, 'html.parser')
     page_title = soup.title.string if soup.title else ""
@@ -48,10 +58,22 @@ def get_match_data(url):
 
     # 3. Navigate to the actual scorecard page if needed
     if response.url != real_url and not response.url.endswith("/scorecard"):
-        # We DO NOT pass the referer from the previous domain redirect to avoid 403 block
-        response = scraper.get(real_url, timeout=30)
-        if response.status_code != 200:
-             raise Exception(f"Failed to load FINAL scorecard URL '{real_url}'. Status: {response.status_code}")
+        response2 = None
+        for imp in impersonates:
+            scraper = requests.Session(impersonate=imp)
+            try:
+                # Attempt to load the final URL
+                r2 = scraper.get(real_url, timeout=30)
+                if r2.status_code == 200:
+                    response2 = r2
+                    break
+            except Exception:
+                continue
+
+        if not response2 or response2.status_code != 200:
+             raise Exception(f"Failed to load FINAL scorecard URL '{real_url}'. Status: {response2.status_code if response2 else 'Timeout'}")
+        
+        response = response2
         soup = BeautifulSoup(response.text, 'html.parser')
 
     # 4. Extract the __NEXT_DATA__ JSON script
