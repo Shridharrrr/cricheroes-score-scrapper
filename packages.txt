@@ -6,7 +6,6 @@ libxcursor1
 libxdamage1
 libxi6
 libxtst6
-libnss3
 libcups2
 libxss1
 libxrandr2
@@ -16,3 +15,4 @@ libatk-bridge2.0-0
 libpango-1.0-0
 libcairo2
 libgbm1
+libxkbcommon0
