@@ -8,7 +8,7 @@ import streamlit as st
 import json
 import os
 from playwright.sync_api import sync_playwright
-import cloudscraper
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 @st.cache_resource
@@ -19,17 +19,9 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'mobile': False,
-            'desktop': True
-        },
-        delay=10 # Wait a bit to pass JS challenges if any
-    )
+    scraper = requests.Session(impersonate="chrome110")
     
-    # 1. Fetch the URL using cloudscraper to bypass Cloudflare
+    # 1. Fetch the URL using curl_cffi to bypass Cloudflare
     response = scraper.get(url, timeout=30)
     if response.status_code != 200:
         raise Exception(f"Failed to load INITIAL URL '{url}'. Status code: {response.status_code}. Possible Cloudflare block on Streamlit IP.")
