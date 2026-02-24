@@ -8,7 +8,7 @@ import streamlit as st
 import json
 import os
 from playwright.sync_api import sync_playwright
-from curl_cffi import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 
 @st.cache_resource
@@ -18,36 +18,17 @@ def install_playwright():
 
 install_playwright()
 
-def fetch_with_fallback(url, session_fallback=None, referer=None):
-    headers = {}
-    if referer:
-        headers["Referer"] = referer
-    
-    # Try multiple impersonation targets if we hit a WAF block (403)
-    targets = ["chrome120", "safari15_3", "chrome110"]
-    for target in targets:
-        try:
-            if session_fallback:
-                r = session_fallback.get(url, impersonate=target, headers=headers, timeout=30)
-            else:
-                r = requests.get(url, impersonate=target, headers=headers, timeout=30)
-            
-            if r.status_code == 200:
-                return r
-        except Exception:
-            pass
-            
-    # Default to returning the last fetched response (even if it's 403) so we can raise an informative error
-    if session_fallback:
-        return session_fallback.get(url, impersonate="chrome120", headers=headers, timeout=30)
-    return requests.get(url, impersonate="chrome120", headers=headers, timeout=30)
-
 def get_match_data(url):
-    # Use a session to persist cookies and headers across requests (handles redirects and nested Cloudflare challenges better)
-    session = requests.Session()
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        }
+    )
     
-    # 1. Fetch the URL using curl_cffi to bypass Cloudflare
-    response = fetch_with_fallback(url, session_fallback=session)
+    # 1. Fetch the URL using cloudscraper to bypass Cloudflare
+    response = scraper.get(url, timeout=30)
     if response.status_code != 200:
         raise Exception(f"Failed to load URL. Status code: {response.status_code}. Possible Cloudflare block.")
     
@@ -73,9 +54,8 @@ def get_match_data(url):
 
     # 3. Navigate to the actual scorecard page if needed
     if response.url != real_url and not response.url.endswith("/scorecard"):
-        # Create a fresh session for the new domain to prevent cross-domain cookie rejection WAF block
-        fresh_session = requests.Session()
-        response = fetch_with_fallback(real_url, session_fallback=fresh_session, referer=response.url)
+        # We also pass the referer from the previous domain redirect just in case
+        response = scraper.get(real_url, headers={"Referer": response.url}, timeout=30)
         if response.status_code != 200:
              raise Exception(f"Failed to load scorecard URL. Status: {response.status_code}")
         soup = BeautifulSoup(response.text, 'html.parser')

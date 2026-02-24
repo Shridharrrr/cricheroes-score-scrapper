@@ -1,4 +1,4 @@
 streamlit
 playwright
-curl_cffi
 beautifulsoup4
+cloudscraper
