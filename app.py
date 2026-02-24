@@ -8,16 +8,13 @@ import streamlit as st
 import json
 import os
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync  # <-- Add this import
 
-# --- PLAYWRIGHT INSTALLATION WORKAROUND FOR STREAMLIT CLOUD ---
 @st.cache_resource
 def install_playwright():
     os.system("playwright install chromium")
     os.system("playwright install-deps chromium")
 
 install_playwright()
-# --------------------------------------------------------------
 
 def get_match_data(url):
     with sync_playwright() as p:
@@ -29,7 +26,7 @@ def get_match_data(url):
                 "--disable-dev-shm-usage",
                 "--single-process",
                 "--disable-gpu",
-                "--disable-blink-features=AutomationControlled" # Extra anti-bot flag
+                "--disable-blink-features=AutomationControlled" # Anti-bot flag
             ]
         )
         
@@ -39,14 +36,16 @@ def get_match_data(url):
         )
         page = context.new_page()
         
-        # Mask Playwright to look like a real human browser
-        stealth_sync(page)
+        # --- THE MAGIC BYPASS (Replaces playwright-stealth) ---
+        # This strips the "webdriver" flag from the browser before the page even loads
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        # ------------------------------------------------------
 
         try:
             # 1. Load the URL
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             
-            # DIAGNOSTIC CHECK: Are we on a bot challenge page?
+            # DIAGNOSTIC CHECK
             page_title = page.title()
             if "Just a moment" in page_title or "Cloudflare" in page_title or "Attention Required" in page_title:
                 raise Exception(f"Blocked by anti-bot protection. Page Title: '{page_title}'")
@@ -56,12 +55,10 @@ def get_match_data(url):
                 real_url = url
             else:
                 try:
-                    # Wait briefly to see if the meta tag loads
                     page.wait_for_selector('meta[property="og:url"]', timeout=3000)
                     og_url = page.locator('meta[property="og:url"]').get_attribute("content")
                     real_url = og_url + "/scorecard" if not og_url.endswith("/scorecard") else og_url
                 except Exception:
-                    # Fallback: Just manually append /scorecard to the user's input URL
                     real_url = url.rstrip("/") + "/scorecard"
 
             # 3. Navigate to the actual scorecard page
@@ -71,7 +68,7 @@ def get_match_data(url):
             # 4. Extract the __NEXT_DATA__ JSON script
             next_data_locator = page.locator('script#__NEXT_DATA__')
             if next_data_locator.count() == 0:
-                raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing. The site structure may have changed.")
+                raise Exception("Failed to fetch scorecard JSON. The page loaded, but the __NEXT_DATA__ block is missing.")
             
             json_text = next_data_locator.inner_text()
 
