@@ -6,11 +6,8 @@ if sys.platform == 'win32':
 
 import streamlit as st
 from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
 import json
-import requests
 import os
-from playwright.sync_api import sync_playwright
 
 @st.cache_resource
 def install_playwright():
@@ -20,36 +17,45 @@ def install_playwright():
 install_playwright()
 
 def get_match_data(url):
-    r = requests.get(url, timeout=15)
-    soup = BeautifulSoup(r.text, "html.parser")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--single-process",
+                "--disable-gpu"
+            ]
+        )
+        
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
 
-    og_url = soup.find("meta", property="og:url")
-    if not og_url:
-        raise Exception("Could not find match URL")
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-    real_url = og_url["content"] + "/scorecard"
+            og_url_element = page.locator('meta[property="og:url"]')
+            if og_url_element.count() == 0:
+                raise Exception("Could not find match URL in meta tags.")
+            
+            og_url = og_url_element.get_attribute("content")
+            real_url = og_url + "/scorecard"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36"
-    }
+            page.goto(real_url, wait_until="domcontentloaded", timeout=30000)
 
-    session = requests.Session()
-    r2 = session.get(real_url, headers=headers, timeout=20)
+            next_data_locator = page.locator('script#__NEXT_DATA__')
+            if next_data_locator.count() == 0:
+                raise Exception("Failed to fetch scorecard JSON (Cloudflare might still be blocking, or page structure changed).")
+            
+            json_text = next_data_locator.inner_text()
 
+        finally:
+            browser.close()
 
-    st.write(f"Status Code: {r2.status_code}")
-    st.write(f"Response snippet: {r2.text[:500]}") 
-
-    if "__NEXT_DATA__" not in r2.text:
-        raise Exception("Failed to fetch scorecard page")
-
-    soup = BeautifulSoup(r2.text, "html.parser")
-    next_data_script = soup.find("script", id="__NEXT_DATA__")
-
-    if not next_data_script:
-        raise Exception("Could not find match JSON data")
-
-    data = json.loads(next_data_script.string)
+    data = json.loads(json_text)
     page_props = data.get("props", {}).get("pageProps", {})
 
     scorecard = page_props.get("scorecard", [])
