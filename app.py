@@ -1,20 +1,3 @@
-import sys
-import asyncio
-
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-import streamlit as st
-import json
-import os
-from playwright.sync_api import sync_playwright
-from curl_cffi import requests
-from bs4 import BeautifulSoup
-
-@st.cache_resource
-def install_playwright():
-    os.system("playwright install chromium")
-    os.system("playwright install-deps chromium")
 
 install_playwright()
 
